@@ -3,12 +3,6 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import Paper from '@mui/material/Paper';
-import Table from '@mui/material/Table';
-import TableBody from '@mui/material/TableBody';
-import TableCell from '@mui/material/TableCell';
-import TableContainer from '@mui/material/TableContainer';
-import TableHead from '@mui/material/TableHead';
-import TableRow from '@mui/material/TableRow';
 import CircularProgress from '@mui/material/CircularProgress';
 import Alert from '@mui/material/Alert';
 import AddIcon from '@mui/icons-material/Add';
@@ -22,28 +16,37 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import ListItemText from '@mui/material/ListItemText';
-import Divider from '@mui/material/Divider';
-import RestaurantMenuIcon from '@mui/icons-material/RestaurantMenu'; // Icon for menu items
+import RestaurantMenuIcon from '@mui/icons-material/RestaurantMenu';
+import PointOfSaleIcon from '@mui/icons-material/PointOfSale';
 
 import apiClient from '../services/api';
+import MenuItemFormModal from '../components/MenuItemFormModal';
+import RecipeIngredientFormModal from '../components/RecipeIngredientFormModal';
+import RecordSaleModal from '../components/RecordSaleModal';
 
 function MenuItemsPage() {
   const [menuItems, setMenuItems] = useState([]);
-  const [ingredients, setIngredients] = useState({}); // Store ingredients keyed by menuItemId
+  const [ingredients, setIngredients] = useState({});
   const [loading, setLoading] = useState({ list: true, ingredients: {} });
   const [error, setError] = useState(null);
   const [apiMessage, setApiMessage] = useState(null);
 
-  // Fetch menu items
+  const [isMenuItemModalOpen, setIsMenuItemModalOpen] = useState(false);
+  const [editingMenuItem, setEditingMenuItem] = useState(null);
+
+  const [isIngredientModalOpen, setIsIngredientModalOpen] = useState(false);
+  const [editingIngredient, setEditingIngredient] = useState(null);
+  const [currentMenuItemIdForIngredient, setCurrentMenuItemIdForIngredient] = useState(null);
+
+  const [isSaleModalOpen, setIsSaleModalOpen] = useState(false);
+
   const fetchMenuItems = async () => {
     setLoading(prev => ({ ...prev, list: true }));
     setError(null);
-    setApiMessage(null);
     try {
       const response = await apiClient.get('/menu-items');
       setMenuItems(response.data);
     } catch (err) {
-      console.error("Failed to fetch menu items:", err);
       const errorMsg = err.response?.data?.error || err.message || 'Failed to fetch menu items';
       setError(errorMsg);
       setApiMessage({ type: 'error', text: errorMsg });
@@ -56,46 +59,65 @@ function MenuItemsPage() {
     fetchMenuItems();
   }, []);
 
-  // Fetch ingredients for a specific menu item when expanded
   const fetchIngredients = async (menuItemId) => {
-    // Avoid refetching if already loaded or currently loading
-    if (ingredients[menuItemId] || loading.ingredients[menuItemId]) {
-      return;
+    if (ingredients[menuItemId] && !loading.ingredients[menuItemId]) {
     }
-
     setLoading(prev => ({ ...prev, ingredients: { ...prev.ingredients, [menuItemId]: true } }));
     try {
       const response = await apiClient.get(`/menu-items/${menuItemId}/ingredients`);
       setIngredients(prev => ({ ...prev, [menuItemId]: response.data }));
     } catch (err) {
-      console.error(`Failed to fetch ingredients for menu item ${menuItemId}:`, err);
-      // Optionally set an error state specific to this item's ingredients
        setApiMessage({ type: 'error', text: `Failed to load ingredients for item ${menuItemId}` });
+       setIngredients(prev => ({...prev, [menuItemId]: []}));
     } finally {
       setLoading(prev => ({ ...prev, ingredients: { ...prev.ingredients, [menuItemId]: false } }));
     }
   };
 
-  // Handlers (Placeholders)
-  const handleAddMenuItem = () => {
-    console.log("Add Menu Item clicked");
-    setApiMessage({ type: 'info', text: 'Add functionality not yet implemented.' });
+  const handleOpenAddMenuItemModal = () => {
+    setEditingMenuItem(null);
+    setIsMenuItemModalOpen(true);
+    setApiMessage(null);
   };
 
-  const handleEditMenuItem = (menuItemId) => {
-    console.log("Edit Menu Item clicked for ID:", menuItemId);
-    setApiMessage({ type: 'info', text: `Edit functionality for ID ${menuItemId} not yet implemented.` });
+  const handleOpenEditMenuItemModal = (menuItem) => {
+    setEditingMenuItem(menuItem);
+    setIsMenuItemModalOpen(true);
+    setApiMessage(null);
+  };
+
+  const handleMenuItemModalClose = () => {
+    setIsMenuItemModalOpen(false);
+    setEditingMenuItem(null);
+  };
+
+  const handleMenuItemModalSubmit = async (menuItemData, menuItemId) => {
+    setApiMessage(null);
+    try {
+      let response;
+      if (menuItemId) {
+        response = await apiClient.put(`/menu-items/${menuItemId}`, menuItemData);
+        setApiMessage({ type: 'success', text: `Menu item "${response.data.menuitemname}" updated successfully.` });
+      } else {
+        response = await apiClient.post('/menu-items', menuItemData);
+        setApiMessage({ type: 'success', text: `Menu item "${response.data.menuitemname}" added successfully.` });
+      }
+      fetchMenuItems();
+      return Promise.resolve();
+    } catch (err) {
+      const errorMsg = err.response?.data?.error || err.message || 'Failed to save menu item';
+      setApiMessage({ type: 'error', text: `Failed to save menu item: ${errorMsg}` });
+      throw new Error(errorMsg);
+    }
   };
 
   const handleDeleteMenuItem = async (menuItemId, menuItemName) => {
-    console.log("Delete Menu Item clicked for ID:", menuItemId);
     setApiMessage(null);
     setError(null);
     if (window.confirm(`Are you sure you want to delete menu item "${menuItemName}"? This will also delete its recipe. This cannot be undone.`)) {
       try {
         await apiClient.delete(`/menu-items/${menuItemId}`);
         setMenuItems(currentItems => currentItems.filter(item => item.menuitemid !== menuItemId));
-        // Also remove ingredients from state if they were loaded
         setIngredients(currentIngredients => {
             const newIngredients = {...currentIngredients};
             delete newIngredients[menuItemId];
@@ -103,7 +125,6 @@ function MenuItemsPage() {
         });
         setApiMessage({ type: 'success', text: `Menu item "${menuItemName}" deleted successfully.` });
       } catch (err) {
-        console.error(`Failed to delete menu item ${menuItemId}:`, err);
         const errorMsg = err.response?.data?.error || err.message || 'Failed to delete menu item';
         setError(errorMsg);
         setApiMessage({ type: 'error', text: errorMsg });
@@ -111,48 +132,108 @@ function MenuItemsPage() {
     }
   };
 
-   const handleAddIngredient = (menuItemId) => {
-    console.log("Add Ingredient clicked for Menu Item ID:", menuItemId);
-    setApiMessage({ type: 'info', text: `Add ingredient functionality for ID ${menuItemId} not yet implemented.` });
+   const handleOpenAddIngredientModal = (menuItemId) => {
+    setCurrentMenuItemIdForIngredient(menuItemId);
+    setEditingIngredient(null);
+    setIsIngredientModalOpen(true);
+    setApiMessage(null);
   };
 
-  const handleEditIngredient = (menuItemId, itemId) => {
-    console.log("Edit Ingredient clicked for Menu Item ID:", menuItemId, "Item ID:", itemId);
-     setApiMessage({ type: 'info', text: `Edit ingredient functionality not yet implemented.` });
+  const handleOpenEditIngredientModal = (menuItemId, ingredient) => {
+    setCurrentMenuItemIdForIngredient(menuItemId);
+    setEditingIngredient(ingredient);
+    setIsIngredientModalOpen(true);
+    setApiMessage(null);
+  };
+
+  const handleIngredientModalClose = () => {
+    setIsIngredientModalOpen(false);
+    setEditingIngredient(null);
+    setCurrentMenuItemIdForIngredient(null);
+  };
+
+  const handleIngredientModalSubmit = async (ingredientData, menuItemIdForApi, ingredientItemId) => {
+    setApiMessage(null);
+    try {
+      let response;
+      if (ingredientItemId) {
+        response = await apiClient.put(`/menu-items/${menuItemIdForApi}/ingredients/${ingredientItemId}`, ingredientData);
+        setApiMessage({ type: 'success', text: `Ingredient "${response.data.itemname}" updated successfully.` });
+      } else {
+        response = await apiClient.post(`/menu-items/${menuItemIdForApi}/ingredients`, ingredientData);
+        setApiMessage({ type: 'success', text: `Ingredient "${response.data.itemname}" added to recipe.` });
+      }
+      fetchIngredients(menuItemIdForApi);
+      return Promise.resolve();
+    } catch (err) {
+      const errorMsg = err.response?.data?.error || err.response?.data?.details || err.message || 'Failed to save ingredient';
+      setApiMessage({ type: 'error', text: `Failed to save ingredient: ${errorMsg}` });
+      throw new Error(errorMsg);
+    }
   };
 
   const handleDeleteIngredient = async (menuItemId, itemId, ingredientName) => {
-     console.log("Delete Ingredient clicked for Menu Item ID:", menuItemId, "Item ID:", itemId);
      setApiMessage(null);
      if (window.confirm(`Are you sure you want to remove ingredient "${ingredientName}" from this recipe?`)) {
          try {
              await apiClient.delete(`/menu-items/${menuItemId}/ingredients/${itemId}`);
-             // Refresh ingredients for this menu item
-             fetchIngredients(menuItemId); // Refetch after delete
+             fetchIngredients(menuItemId);
              setApiMessage({ type: 'success', text: `Ingredient "${ingredientName}" removed successfully.` });
          } catch (err) {
-              console.error(`Failed to delete ingredient ${itemId}:`, err);
               const errorMsg = err.response?.data?.error || err.message || 'Failed to delete ingredient';
               setApiMessage({ type: 'error', text: errorMsg });
          }
      }
   };
 
+  const handleOpenSaleModal = () => {
+    setIsSaleModalOpen(true);
+    setApiMessage(null);
+  };
 
-  // --- Render Logic ---
+  const handleSaleModalClose = () => {
+    setIsSaleModalOpen(false);
+  };
+
+  const handleSaleModalSubmit = async (saleData) => {
+    setApiMessage(null);
+    try {
+      const response = await apiClient.post(`/usage/sale/${saleData.menuItemId}`, {
+        quantitySold: saleData.quantitySold,
+        usageDate: saleData.usageDate
+      });
+      setApiMessage({ type: 'success', text: response.data.message || 'Sale recorded successfully.' });
+      return Promise.resolve();
+    } catch (err) {
+      const errorMsg = err.response?.data?.error || err.response?.data?.details || err.message || 'Failed to record sale.';
+      setApiMessage({ type: 'error', text: `Sale recording failed: ${errorMsg}` });
+      throw new Error(errorMsg);
+    }
+  };
+
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Typography variant="h4" component="h1">
           Menu Items & Recipes
         </Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={handleAddMenuItem}
-        >
-          Add Menu Item
-        </Button>
+        <Box>
+            <Button
+              variant="outlined"
+              startIcon={<PointOfSaleIcon />}
+              onClick={handleOpenSaleModal}
+              sx={{ mr: 2 }}
+            >
+              Record Sale
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={handleOpenAddMenuItemModal}
+            >
+              Add Menu Item
+            </Button>
+        </Box>
       </Box>
 
       {apiMessage && (
@@ -177,7 +258,6 @@ function MenuItemsPage() {
          <Typography sx={{ textAlign: 'center', mt: 3 }}>No menu items found. Create one!</Typography>
       )}
 
-      {/* Display Menu Items using Accordions */}
       {!loading.list && !error && menuItems.length > 0 && (
         <Box>
           {menuItems.map((menuItem) => (
@@ -186,7 +266,7 @@ function MenuItemsPage() {
                 sx={{ mb: 1 }}
                 onChange={(event, isExpanded) => {
                     if (isExpanded) {
-                        fetchIngredients(menuItem.menuitemid); // Fetch ingredients when expanded
+                        fetchIngredients(menuItem.menuitemid);
                     }
                 }}
             >
@@ -199,18 +279,17 @@ function MenuItemsPage() {
                 <Typography sx={{ width: '40%', flexShrink: 0 }}>
                   {menuItem.menuitemname} (ID: {menuItem.menuitemid})
                 </Typography>
-                <Typography sx={{ color: 'text.secondary', mr: 2 }}>
+                <Typography sx={{ color: 'text.secondary', mr: 2, flexGrow: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {menuItem.description || 'No description'}
                 </Typography>
-                 <Typography sx={{ color: 'text.secondary', fontWeight: 'bold' }}>
+                 <Typography sx={{ color: 'text.secondary', fontWeight: 'bold', mr:2 }}>
                   {menuItem.price ? `$${parseFloat(menuItem.price).toFixed(2)}` : 'No price'}
                 </Typography>
-                 <Box sx={{ flexGrow: 1 }} /> {/* Spacer */}
                   <IconButton
                         aria-label="edit menu item"
                         size="small"
-                        onClick={(e) => { e.stopPropagation(); handleEditMenuItem(menuItem.menuitemid); }} // Prevent accordion toggle
-                        title="Edit Menu Item (Not Implemented)"
+                        onClick={(e) => { e.stopPropagation(); handleOpenEditMenuItemModal(menuItem); }}
+                        title="Edit Menu Item"
                         sx={{ mr: 1 }}
                     >
                         <EditIcon fontSize="inherit" />
@@ -218,13 +297,12 @@ function MenuItemsPage() {
                     <IconButton
                         aria-label="delete menu item"
                         size="small"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteMenuItem(menuItem.menuitemid, menuItem.menuitemname); }} // Prevent accordion toggle
+                        onClick={(e) => { e.stopPropagation(); handleDeleteMenuItem(menuItem.menuitemid, menuItem.menuitemname); }}
                         color="error"
                         title="Delete Menu Item"
                     >
                         <DeleteIcon fontSize="inherit" />
                     </IconButton>
-
               </AccordionSummary>
               <AccordionDetails>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
@@ -232,13 +310,12 @@ function MenuItemsPage() {
                      <Button
                         size="small"
                         startIcon={<AddIcon />}
-                        onClick={() => handleAddIngredient(menuItem.menuitemid)}
-                        title="Add Ingredient (Not Implemented)"
+                        onClick={() => handleOpenAddIngredientModal(menuItem.menuitemid)}
+                        title="Add Ingredient"
                     >
                         Add Ingredient
                     </Button>
                 </Box>
-
                 {loading.ingredients[menuItem.menuitemid] ? (
                   <CircularProgress size={24} />
                 ) : !ingredients[menuItem.menuitemid] || ingredients[menuItem.menuitemid].length === 0 ? (
@@ -255,8 +332,8 @@ function MenuItemsPage() {
                                 aria-label="edit ingredient"
                                 size="small"
                                 sx={{ mr: 0.5 }}
-                                onClick={() => handleEditIngredient(menuItem.menuitemid, ingredient.itemid)}
-                                title="Edit Ingredient (Not Implemented)"
+                                onClick={() => handleOpenEditIngredientModal(menuItem.menuitemid, ingredient)}
+                                title="Edit Ingredient"
                             >
                                 <EditIcon fontSize="inherit"/>
                             </IconButton>
@@ -287,6 +364,26 @@ function MenuItemsPage() {
           ))}
         </Box>
       )}
+      <MenuItemFormModal
+        open={isMenuItemModalOpen}
+        onClose={handleMenuItemModalClose}
+        onSubmit={handleMenuItemModalSubmit}
+        initialData={editingMenuItem}
+      />
+      {isIngredientModalOpen && (
+            <RecipeIngredientFormModal
+                open={isIngredientModalOpen}
+                onClose={handleIngredientModalClose}
+                onSubmit={handleIngredientModalSubmit}
+                menuItemId={currentMenuItemIdForIngredient}
+                initialData={editingIngredient}
+            />
+        )}
+      <RecordSaleModal
+        open={isSaleModalOpen}
+        onClose={handleSaleModalClose}
+        onSubmit={handleSaleModalSubmit}
+      />
     </Box>
   );
 }

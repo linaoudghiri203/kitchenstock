@@ -10,80 +10,83 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import CircularProgress from '@mui/material/CircularProgress';
 import Alert from '@mui/material/Alert';
-import Grid from '@mui/material/Grid'; // For layout
-import { format } from 'date-fns'; // For formatting dates
+import Grid from '@mui/material/Grid';
+import TextField from '@mui/material/TextField';
+import { format, parseISO } from 'date-fns';
 
-import apiClient from '../services/api'; // Import the configured Axios instance
+import apiClient from '../services/api';
 
-// Helper function to format date strings (or return empty string)
 const formatDate = (dateString) => {
-    if (!dateString) return '';
+    if (!dateString) return '-';
     try {
-        // Assuming dateString is like 'YYYY-MM-DD' or a full ISO string
-        return format(new Date(dateString), 'PP'); // e.g., Apr 30, 2025
+        const date = typeof dateString === 'string' && dateString.length === 10 ? parseISO(dateString + 'T00:00:00') : new Date(dateString);
+        return format(date, 'PP');
     } catch (e) {
         console.error("Error formatting date:", dateString, e);
-        return dateString; // Return original string if formatting fails
+        return dateString;
     }
 };
 
 function ReportsPage() {
-  // State for each report
   const [lowStockItems, setLowStockItems] = useState([]);
   const [expiringItems, setExpiringItems] = useState([]);
   const [wasteItems, setWasteItems] = useState([]);
 
-  // Loading and error states (can be combined or separate)
   const [loading, setLoading] = useState({ lowStock: true, expirations: true, waste: true });
   const [error, setError] = useState({ lowStock: null, expirations: null, waste: null });
 
-  // Fetch all reports on component mount
+  const [expirationDays, setExpirationDays] = useState(7);
+  const [includePastDue, setIncludePastDue] = useState(true);
+
+  const fetchLowStockReport = async () => {
+    setLoading(prev => ({ ...prev, lowStock: true }));
+    setError(prev => ({ ...prev, lowStock: null }));
+    try {
+      const res = await apiClient.get('/reports/low-stock');
+      setLowStockItems(res.data);
+    } catch (err) {
+      setError(prev => ({ ...prev, lowStock: err.response?.data?.error || err.message || 'Failed to fetch low stock report' }));
+    } finally {
+      setLoading(prev => ({ ...prev, lowStock: false }));
+    }
+  };
+
+  const fetchExpirationReport = async () => {
+    setLoading(prev => ({ ...prev, expirations: true }));
+    setError(prev => ({ ...prev, expirations: null }));
+    try {
+      const res = await apiClient.get(`/reports/expirations?days=${expirationDays}&includePastDue=${includePastDue}`);
+      setExpiringItems(res.data);
+    } catch (err) {
+      setError(prev => ({ ...prev, expirations: err.response?.data?.error || err.message || 'Failed to fetch expiration report' }));
+    } finally {
+      setLoading(prev => ({ ...prev, expirations: false }));
+    }
+  };
+
+  const fetchWasteReport = async () => {
+    setLoading(prev => ({ ...prev, waste: true }));
+    setError(prev => ({ ...prev, waste: null }));
+    try {
+      const res = await apiClient.get('/reports/waste');
+      setWasteItems(res.data);
+    } catch (err) {
+      setError(prev => ({ ...prev, waste: err.response?.data?.error || err.message || 'Failed to fetch waste report' }));
+    } finally {
+      setLoading(prev => ({ ...prev, waste: false }));
+    }
+  };
+
   useEffect(() => {
-    const fetchReports = async () => {
-      // Fetch Low Stock
-      try {
-        setLoading(prev => ({ ...prev, lowStock: true }));
-        setError(prev => ({ ...prev, lowStock: null }));
-        const res = await apiClient.get('/reports/low-stock');
-        setLowStockItems(res.data);
-      } catch (err) {
-        console.error("Failed to fetch low stock report:", err);
-        setError(prev => ({ ...prev, lowStock: err.response?.data?.error || err.message || 'Failed to fetch low stock report' }));
-      } finally {
-        setLoading(prev => ({ ...prev, lowStock: false }));
-      }
+    fetchLowStockReport();
+    fetchWasteReport();
+  }, []);
 
-      // Fetch Expirations (default: next 7 days + past due)
-      try {
-        setLoading(prev => ({ ...prev, expirations: true }));
-        setError(prev => ({ ...prev, expirations: null }));
-        const res = await apiClient.get('/reports/expirations?days=7'); // Example: Fetch for next 7 days
-        setExpiringItems(res.data);
-      } catch (err) {
-        console.error("Failed to fetch expiration report:", err);
-        setError(prev => ({ ...prev, expirations: err.response?.data?.error || err.message || 'Failed to fetch expiration report' }));
-      } finally {
-        setLoading(prev => ({ ...prev, expirations: false }));
-      }
+  useEffect(() => {
+    fetchExpirationReport();
+  }, [expirationDays, includePastDue]);
 
-      // Fetch Waste
-      try {
-        setLoading(prev => ({ ...prev, waste: true }));
-        setError(prev => ({ ...prev, waste: null }));
-        const res = await apiClient.get('/reports/waste');
-        setWasteItems(res.data);
-      } catch (err) {
-        console.error("Failed to fetch waste report:", err);
-        setError(prev => ({ ...prev, waste: err.response?.data?.error || err.message || 'Failed to fetch waste report' }));
-      } finally {
-        setLoading(prev => ({ ...prev, waste: false }));
-      }
-    };
 
-    fetchReports();
-  }, []); // Empty dependency array means this effect runs only once on mount
-
-  // --- Render Logic ---
   return (
     <Box>
       <Typography variant="h4" component="h1" gutterBottom>
@@ -91,7 +94,6 @@ function ReportsPage() {
       </Typography>
 
       <Grid container spacing={3}>
-        {/* Low Stock Report Section */}
         <Grid item xs={12} md={6} lg={4}>
           <Typography variant="h6" component="h2" gutterBottom>Low Stock Items</Typography>
           {loading.lowStock ? (
@@ -120,7 +122,7 @@ function ReportsPage() {
                         <TableCell>{item.categoryname}</TableCell>
                         <TableCell align="right">{parseFloat(item.quantityonhand).toFixed(2)}</TableCell>
                         <TableCell align="right">{parseFloat(item.reorderpoint).toFixed(2)}</TableCell>
-                        <TableCell>{item.unitabbreviation}</TableCell>
+                        <TableCell>{item.unit_abbreviation}</TableCell>
                       </TableRow>
                     ))
                   )}
@@ -130,11 +132,21 @@ function ReportsPage() {
           )}
         </Grid>
 
-        {/* Expiration Report Section */}
         <Grid item xs={12} md={6} lg={4}>
-          <Typography variant="h6" component="h2" gutterBottom>Expiring Soon / Past Due</Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography variant="h6" component="h2" gutterBottom>Expiring Soon / Past Due</Typography>
+            <TextField
+                label="Days"
+                type="number"
+                size="small"
+                value={expirationDays}
+                onChange={(e) => setExpirationDays(Math.max(0, parseInt(e.target.value,10) || 0))}
+                inputProps={{min: 0}}
+                sx={{width: '80px', mb:1}}
+            />
+          </Box>
            <Typography variant="caption" display="block" gutterBottom>
-             Note: Based on delivery records, may not reflect current stock batches.
+             Note: Based on delivery item records, may not reflect current stock batches.
            </Typography>
           {loading.expirations ? (
             <CircularProgress />
@@ -146,25 +158,29 @@ function ReportsPage() {
                 <TableHead sx={{ backgroundColor: 'grey.200' }}>
                   <TableRow>
                     <TableCell>Item</TableCell>
+                    <TableCell>Item Type</TableCell>
                     <TableCell>Expires</TableCell>
-                    <TableCell>Delivered</TableCell>
+                    <TableCell>Delivered On</TableCell>
                     <TableCell>Supplier</TableCell>
-                    {/* <TableCell align="right">Qty Recvd</TableCell> */}
+                    <TableCell align="right">Qty Recvd</TableCell>
+                    <TableCell>Unit</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {expiringItems.length === 0 ? (
-                     <TableRow><TableCell colSpan={4} align="center">No items expiring soon or past due.</TableCell></TableRow>
+                     <TableRow><TableCell colSpan={7} align="center">No items expiring in the selected timeframe.</TableCell></TableRow>
                   ) : (
-                    expiringItems.map((item, index) => ( // Use index for key if IDs aren't unique across deliveries
+                    expiringItems.map((item, index) => (
                       <TableRow key={`${item.deliveryid}-${item.itemid}-${index}`} sx={{ '&:hover': { backgroundColor: 'action.hover'} }}>
                         <TableCell>{item.itemname}</TableCell>
+                        <TableCell>{item.itemtype}</TableCell>
                         <TableCell sx={{ color: new Date(item.expirationdate) < new Date() ? 'error.main' : 'inherit' }}>
                             {formatDate(item.expirationdate)}
                         </TableCell>
-                        <TableCell>{formatDate(item.deliverydate)}</TableCell>
+                        <TableCell>{formatDate(item.delivery_received_date)}</TableCell>
                         <TableCell>{item.suppliername || '-'}</TableCell>
-                        {/* <TableCell align="right">{parseFloat(item.quantityreceived).toFixed(2)} {item.unitabbreviation}</TableCell> */}
+                        <TableCell align="right">{parseFloat(item.quantity_from_delivery).toFixed(2)}</TableCell>
+                        <TableCell>{item.delivery_item_unit_abbreviation}</TableCell>
                       </TableRow>
                     ))
                   )}
@@ -174,7 +190,6 @@ function ReportsPage() {
           )}
         </Grid>
 
-        {/* Waste Report Section */}
         <Grid item xs={12} md={6} lg={4}>
           <Typography variant="h6" component="h2" gutterBottom>Waste Records</Typography>
           {loading.waste ? (
@@ -202,7 +217,7 @@ function ReportsPage() {
                         <TableCell>{formatDate(item.wastedate)}</TableCell>
                         <TableCell>{item.itemname}</TableCell>
                         <TableCell align="right">{parseFloat(item.quantitywasted).toFixed(2)}</TableCell>
-                        <TableCell>{item.unitabbreviation}</TableCell>
+                        <TableCell>{item.waste_unit_abbreviation}</TableCell>
                         <TableCell>{item.reason || '-'}</TableCell>
                       </TableRow>
                     ))

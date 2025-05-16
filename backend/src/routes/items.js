@@ -1,250 +1,225 @@
+
 const express = require('express');
-const db = require('../config/db'); // Import the database query function
+const db = require('../config/db');
 
 const router = express.Router();
 
-// --- GET /api/items - Retrieve all inventory items ---
-// Includes optional filtering by category and joins for readable names
 router.get('/', async (req, res, next) => {
-  // Example: /api/items?categoryid=1
   const { categoryid } = req.query;
-  let queryText = `
-    SELECT
-        i.ItemID, i.ItemName, i.Description, i.QuantityOnHand, i.ReorderPoint, i.LastUpdated,
-        c.CategoryID, c.CategoryName,
-        u.UnitID, u.Unit AS UnitName, u.Abbreviation AS UnitAbbreviation,
-        s.SupplierID, s.SupplierName
-    FROM INVENTORY_ITEM i
-    JOIN CATEGORY c ON i.CategoryID = c.CategoryID
-    JOIN UNIT_OF_MEASURE u ON i.UnitID = u.UnitID
-    LEFT JOIN SUPPLIER s ON i.SupplierID = s.SupplierID`; // LEFT JOIN for optional supplier
-
+  let queryText = 'SELECT * FROM vw_inventory_items_details';
   const queryParams = [];
+  let paramIndex = 1;
 
   if (categoryid && !isNaN(parseInt(categoryid, 10))) {
-    queryText += ' WHERE i.CategoryID = $1';
+    queryText += ` WHERE categoryid = $${paramIndex++}`;
     queryParams.push(parseInt(categoryid, 10));
   }
-
-  queryText += ' ORDER BY i.ItemID ASC';
+  queryText += ' ORDER BY itemid ASC';
 
   try {
     const { rows } = await db.query(queryText, queryParams);
     res.status(200).json(rows);
   } catch (err) {
-    console.error('Error fetching inventory items:', err);
+    console.error('Error fetching inventory items from view:', err);
     next(err);
   }
 });
 
-// --- GET /api/items/:id - Retrieve a single inventory item by ID ---
 router.get('/:id', async (req, res, next) => {
   const { id } = req.params;
   if (isNaN(parseInt(id, 10))) {
       return res.status(400).json({ error: 'Invalid item ID provided.' });
   }
-
   try {
-    // Query joins with related tables to get names along with IDs
-    const queryText = `
-      SELECT
-          i.ItemID, i.ItemName, i.Description, i.QuantityOnHand, i.ReorderPoint, i.LastUpdated,
-          c.CategoryID, c.CategoryName,
-          u.UnitID, u.Unit AS UnitName, u.Abbreviation AS UnitAbbreviation,
-          s.SupplierID, s.SupplierName
-      FROM INVENTORY_ITEM i
-      JOIN CATEGORY c ON i.CategoryID = c.CategoryID
-      JOIN UNIT_OF_MEASURE u ON i.UnitID = u.UnitID
-      LEFT JOIN SUPPLIER s ON i.SupplierID = s.SupplierID
-      WHERE i.ItemID = $1`;
-
+    const queryText = 'SELECT * FROM vw_inventory_items_details WHERE itemid = $1';
     const { rows } = await db.query(queryText, [id]);
-
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Inventory item not found' });
     }
     res.status(200).json(rows[0]);
   } catch (err) {
-    console.error(`Error fetching inventory item ${id}:`, err);
+    console.error(`Error fetching inventory item ${id} from view:`, err);
     next(err);
   }
 });
 
-// --- POST /api/items - Create a new inventory item ---
 router.post('/', async (req, res, next) => {
   const {
-    itemname, // Required
-    description, // Optional
-    categoryid, // Required
-    unitid, // Required
-    quantityonhand, // Optional, defaults to 0 in DB
-    reorderpoint, // Optional, defaults to 0 in DB
-    supplierid // Optional
+    itemname, description, categoryid, unitid,
+    quantityonhand = 0, reorderpoint = 0, itemtype,
+    expirationdate, storagetemperature,
+    warrantyperiod,
+    maintenanceschedule
   } = req.body;
 
-  // --- Validation ---
-  if (!itemname || !categoryid || !unitid) {
-    return res.status(400).json({ error: 'Missing required fields: itemname, categoryid, unitid' });
+  if (!itemname || !categoryid || !unitid || !itemtype) {
+    return res.status(400).json({ error: 'Missing required fields: itemname, categoryid, unitid, itemtype' });
+  }
+  if (!['Perishable', 'NonPerishable', 'Tool'].includes(itemtype)) {
+    return res.status(400).json({ error: 'Invalid itemtype provided.' });
   }
   if (isNaN(parseInt(categoryid, 10)) || isNaN(parseInt(unitid, 10))) {
       return res.status(400).json({ error: 'Invalid categoryid or unitid. Must be numbers.' });
   }
-  if (supplierid && isNaN(parseInt(supplierid, 10))) {
-      return res.status(400).json({ error: 'Invalid supplierid. Must be a number or null.' });
-  }
-  // Validate numeric fields if provided
-  const qty = quantityonhand !== undefined ? parseFloat(quantityonhand) : 0;
-  const reorder = reorderpoint !== undefined ? parseFloat(reorderpoint) : 0;
+  const qty = parseFloat(quantityonhand);
+  const reorder = parseFloat(reorderpoint);
    if (isNaN(qty) || qty < 0) {
        return res.status(400).json({ error: 'Invalid quantityonhand. Must be a non-negative number.' });
    }
    if (isNaN(reorder) || reorder < 0) {
        return res.status(400).json({ error: 'Invalid reorderpoint. Must be a non-negative number.' });
    }
-   // --- End Validation ---
+
+  const client = await db.pool.connect();
 
   try {
-    const queryText = `
+    await client.query('BEGIN');
+
+    const inventoryItemQuery = `
       INSERT INTO INVENTORY_ITEM
-        (ItemName, Description, CategoryID, UnitID, QuantityOnHand, ReorderPoint, SupplierID)
+        (ItemName, Description, CategoryID, UnitID, QuantityOnHand, ReorderPoint, ItemType)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING *;`;
-    const values = [
-        itemname,
-        description || null,
-        parseInt(categoryid, 10),
-        parseInt(unitid, 10),
-        qty,
-        reorder,
-        supplierid ? parseInt(supplierid, 10) : null // Use null if supplierid is not provided
+      RETURNING ItemID;`;
+    const inventoryItemValues = [
+        itemname, description || null, parseInt(categoryid, 10), parseInt(unitid, 10),
+        qty, reorder, itemtype
     ];
+    const inventoryItemResult = await client.query(inventoryItemQuery, inventoryItemValues);
+    const newItemId = inventoryItemResult.rows[0].itemid;
 
-    const { rows } = await db.query(queryText, values);
-    // Optionally, fetch the newly created item with joined names for the response
-    const newItemResult = await db.query(`
-        SELECT i.*, c.CategoryName, u.Unit AS UnitName, u.Abbreviation AS UnitAbbreviation, s.SupplierName
-        FROM INVENTORY_ITEM i
-        JOIN CATEGORY c ON i.CategoryID = c.CategoryID
-        JOIN UNIT_OF_MEASURE u ON i.UnitID = u.UnitID
-        LEFT JOIN SUPPLIER s ON i.SupplierID = s.SupplierID
-        WHERE i.ItemID = $1`, [rows[0].itemid]);
+    if (itemtype === 'Perishable') {
+      const perishableQuery = `
+        INSERT INTO PerishableItem (ItemID, ExpirationDate, StorageTemperature)
+        VALUES ($1, $2, $3);`;
+      await client.query(perishableQuery, [newItemId, expirationdate || null, storagetemperature || null]);
+    } else if (itemtype === 'NonPerishable') {
+      const nonPerishableQuery = `
+        INSERT INTO NonPerishableItem (ItemID, WarrantyPeriod)
+        VALUES ($1, $2);`;
+      await client.query(nonPerishableQuery, [newItemId, warrantyperiod || null]);
+    } else if (itemtype === 'Tool') {
+      const toolQuery = `
+        INSERT INTO ToolItem (ItemID, MaintenanceSchedule)
+        VALUES ($1, $2);`;
+      await client.query(toolQuery, [newItemId, maintenanceschedule || null]);
+    }
 
-    res.status(201).json(newItemResult.rows[0]);
+    await client.query('COMMIT');
+
+    const newItemFromView = await db.query('SELECT * FROM vw_inventory_items_details WHERE itemid = $1', [newItemId]);
+    res.status(201).json(newItemFromView.rows[0]);
 
   } catch (err) {
-    console.error('Error creating inventory item:', err);
-    if (err.code === '23505' && err.constraint === 'inventory_item_itemname_key') { // Handle unique item name
+    await client.query('ROLLBACK');
+    console.error('Error creating inventory item with subtype:', err);
+    if (err.code === '23505' && err.constraint === 'inventory_item_itemname_key') {
         return res.status(409).json({ error: 'Inventory item name already exists.' });
     }
-    if (err.code === '23503') { // Handle foreign key violation (e.g., categoryid doesn't exist)
-         return res.status(400).json({ error: 'Invalid CategoryID, UnitID, or SupplierID provided. Referenced record does not exist.' });
+    if (err.code === '23503') {
+         return res.status(400).json({ error: 'Invalid CategoryID or UnitID provided. Referenced record does not exist.', details: err.message });
     }
     next(err);
+  } finally {
+    client.release();
   }
 });
 
-// --- PUT /api/items/:id - Update an existing inventory item ---
 router.put('/:id', async (req, res, next) => {
   const { id } = req.params;
+  const itemIdToUpdate = parseInt(id, 10);
+
   const {
     itemname, description, categoryid, unitid,
-    quantityonhand, reorderpoint, supplierid
+    quantityonhand, reorderpoint, itemtype,
+    expirationdate, storagetemperature,
+    warrantyperiod,
+    maintenanceschedule
   } = req.body;
 
-  // --- Validation ---
-   if (isNaN(parseInt(id, 10))) {
+  if (isNaN(itemIdToUpdate)) {
       return res.status(400).json({ error: 'Invalid item ID provided.' });
   }
-  if (!itemname || !categoryid || !unitid) {
-    return res.status(400).json({ error: 'Missing required fields: itemname, categoryid, unitid' });
-  }
-   if (isNaN(parseInt(categoryid, 10)) || isNaN(parseInt(unitid, 10))) {
-      return res.status(400).json({ error: 'Invalid categoryid or unitid. Must be numbers.' });
-  }
-  if (supplierid && isNaN(parseInt(supplierid, 10))) {
-      return res.status(400).json({ error: 'Invalid supplierid. Must be a number or null/undefined.' });
-  }
-  // Validate numeric fields if provided (allow them to be missing from request)
-  let qty, reorder;
-  if (quantityonhand !== undefined) {
-      qty = parseFloat(quantityonhand);
-      if (isNaN(qty) || qty < 0) {
-          return res.status(400).json({ error: 'Invalid quantityonhand. Must be a non-negative number.' });
-      }
-  }
-  if (reorderpoint !== undefined) {
-      reorder = parseFloat(reorderpoint);
-      if (isNaN(reorder) || reorder < 0) {
-          return res.status(400).json({ error: 'Invalid reorderpoint. Must be a non-negative number.' });
-      }
-  }
-  // --- End Validation ---
 
+  const client = await db.pool.connect();
   try {
-    // Construct the update query dynamically based on provided fields
-    // This avoids overwriting existing values with null if they aren't in the request body
-    // Note: The trigger will automatically update LastUpdated
-    const fields = [];
-    const values = [];
-    let paramIndex = 1;
+    await client.query('BEGIN');
 
-    if (itemname !== undefined) { fields.push(`ItemName = $${paramIndex++}`); values.push(itemname); }
-    if (description !== undefined) { fields.push(`Description = $${paramIndex++}`); values.push(description); }
-    if (categoryid !== undefined) { fields.push(`CategoryID = $${paramIndex++}`); values.push(parseInt(categoryid, 10)); }
-    if (unitid !== undefined) { fields.push(`UnitID = $${paramIndex++}`); values.push(parseInt(unitid, 10)); }
-    if (qty !== undefined) { fields.push(`QuantityOnHand = $${paramIndex++}`); values.push(qty); }
-    if (reorder !== undefined) { fields.push(`ReorderPoint = $${paramIndex++}`); values.push(reorder); }
-    // Handle supplierid potentially being set to null
-    if (supplierid !== undefined) {
-        fields.push(`SupplierID = $${paramIndex++}`);
-        values.push(supplierid ? parseInt(supplierid, 10) : null);
+    const itemFields = [];
+    const itemValues = [];
+    let itemParamIndex = 1;
+
+    if (itemname !== undefined) { itemFields.push(`ItemName = $${itemParamIndex++}`); itemValues.push(itemname); }
+    if (description !== undefined) { itemFields.push(`Description = $${itemParamIndex++}`); itemValues.push(description); }
+    if (categoryid !== undefined) { itemFields.push(`CategoryID = $${itemParamIndex++}`); itemValues.push(parseInt(categoryid, 10)); }
+    if (unitid !== undefined) { itemFields.push(`UnitID = $${itemParamIndex++}`); itemValues.push(parseInt(unitid, 10)); }
+    if (quantityonhand !== undefined) { itemFields.push(`QuantityOnHand = $${itemParamIndex++}`); itemValues.push(parseFloat(quantityonhand)); }
+    if (reorderpoint !== undefined) { itemFields.push(`ReorderPoint = $${itemParamIndex++}`); itemValues.push(parseFloat(reorderpoint)); }
+
+    if (itemFields.length > 0) {
+        itemValues.push(itemIdToUpdate);
+        const updateItemQuery = `UPDATE INVENTORY_ITEM SET ${itemFields.join(', ')} WHERE ItemID = $${itemParamIndex} RETURNING ItemType;`;
+        const itemUpdateResult = await client.query(updateItemQuery, itemValues);
+        if (itemUpdateResult.rowCount === 0) {
+            throw new Error('Inventory item not found or no changes to core item data.');
+        }
+    }
+    
+    const currentItemDetails = await client.query('SELECT itemType FROM INVENTORY_ITEM WHERE ItemID = $1', [itemIdToUpdate]);
+    if (currentItemDetails.rows.length === 0) {
+        return res.status(404).json({ message: 'Inventory item not found after initial update check.' });
+    }
+    const currentItemType = currentItemDetails.rows[0].itemtype;
+
+    if (currentItemType === 'Perishable') {
+      const perishableFields = [];
+      const perishableValues = [];
+      let pParamIndex = 1;
+      if (expirationdate !== undefined) { perishableFields.push(`ExpirationDate = $${pParamIndex++}`); perishableValues.push(expirationdate || null); }
+      if (storagetemperature !== undefined) { perishableFields.push(`StorageTemperature = $${pParamIndex++}`); perishableValues.push(storagetemperature || null); }
+      
+      if (perishableFields.length > 0) {
+        perishableValues.push(itemIdToUpdate);
+        const updatePerishableQuery = `UPDATE PerishableItem SET ${perishableFields.join(', ')} WHERE ItemID = $${pParamIndex};`;
+        await client.query(updatePerishableQuery, perishableValues);
+      }
+    } else if (currentItemType === 'NonPerishable') {
+      if (warrantyperiod !== undefined) {
+        const updateNonPerishableQuery = `UPDATE NonPerishableItem SET WarrantyPeriod = $1 WHERE ItemID = $2;`;
+        await client.query(updateNonPerishableQuery, [warrantyperiod || null, itemIdToUpdate]);
+      }
+    } else if (currentItemType === 'Tool') {
+      if (maintenanceschedule !== undefined) {
+        const updateToolQuery = `UPDATE ToolItem SET MaintenanceSchedule = $1 WHERE ItemID = $2;`;
+        await client.query(updateToolQuery, [maintenanceschedule || null, itemIdToUpdate]);
+      }
     }
 
+    await client.query('COMMIT');
 
-    if (fields.length === 0) {
-        return res.status(400).json({ error: 'No valid fields provided for update.' });
+    const updatedItemFromView = await db.query('SELECT * FROM vw_inventory_items_details WHERE itemid = $1', [itemIdToUpdate]);
+     if (updatedItemFromView.rows.length === 0) {
+      return res.status(404).json({ message: 'Updated inventory item not found in view (should not happen).' });
     }
-
-    // Add the WHERE clause parameter
-    values.push(parseInt(id, 10));
-
-    const queryText = `
-      UPDATE INVENTORY_ITEM
-      SET ${fields.join(', ')}
-      WHERE ItemID = $${paramIndex}
-      RETURNING *;`;
-
-    const { rows } = await db.query(queryText, values);
-
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'Inventory item not found' });
-    }
-
-    // Optionally, fetch the updated item with joined names for the response
-    const updatedItemResult = await db.query(`
-        SELECT i.*, c.CategoryName, u.Unit AS UnitName, u.Abbreviation AS UnitAbbreviation, s.SupplierName
-        FROM INVENTORY_ITEM i
-        JOIN CATEGORY c ON i.CategoryID = c.CategoryID
-        JOIN UNIT_OF_MEASURE u ON i.UnitID = u.UnitID
-        LEFT JOIN SUPPLIER s ON i.SupplierID = s.SupplierID
-        WHERE i.ItemID = $1`, [id]);
-
-
-    res.status(200).json(updatedItemResult.rows[0]); // Send back the updated item
+    res.status(200).json(updatedItemFromView.rows[0]);
 
   } catch (err) {
-    console.error(`Error updating inventory item ${id}:`, err);
-    if (err.code === '23505' && err.constraint === 'inventory_item_itemname_key') { // Handle unique item name
+    await client.query('ROLLBACK');
+    console.error(`Error updating inventory item ${itemIdToUpdate} with subtype:`, err);
+    if (err.code === '23505' && err.constraint === 'inventory_item_itemname_key') {
         return res.status(409).json({ error: 'Updated item name conflicts with an existing one.' });
     }
-     if (err.code === '23503') { // Handle foreign key violation (e.g., categoryid doesn't exist)
-         return res.status(400).json({ error: 'Invalid CategoryID, UnitID, or SupplierID provided. Referenced record does not exist.' });
+    if (err.code === '23503') {
+         return res.status(400).json({ error: 'Invalid CategoryID or UnitID provided. Referenced record does not exist.', details: err.message });
+    }
+    if (err.message.includes('not found')) {
+        return res.status(404).json({ error: err.message });
     }
     next(err);
+  } finally {
+    client.release();
   }
 });
 
-// --- DELETE /api/items/:id - Delete an inventory item ---
 router.delete('/:id', async (req, res, next) => {
   const { id } = req.params;
 
@@ -253,20 +228,18 @@ router.delete('/:id', async (req, res, next) => {
   }
 
   try {
-    // Attempt to delete the item
     const queryText = 'DELETE FROM INVENTORY_ITEM WHERE ItemID = $1 RETURNING *;';
     const { rows } = await db.query(queryText, [id]);
 
     if (rows.length === 0) {
       return res.status(404).json({ message: 'Inventory item not found' });
     }
-     res.status(204).send(); // Success, no content
+     res.status(204).send();
 
   } catch (err) {
     console.error(`Error deleting inventory item ${id}:`, err);
-    // Handle foreign key constraint violation (item used in deliveries, recipes, usage, waste)
     if (err.code === '23503') {
-        return res.status(409).json({ error: 'Cannot delete item: It is referenced in deliveries, recipes, usage, or waste records.' });
+        return res.status(409).json({ error: 'Cannot delete item: It is referenced in other records (deliveries, recipes, usage, etc.).' });
     }
     next(err);
   }

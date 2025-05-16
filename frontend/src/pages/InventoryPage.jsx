@@ -15,24 +15,37 @@ import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import IconButton from '@mui/material/IconButton';
-import Chip from '@mui/material/Chip'; // For displaying low stock status
+import Chip from '@mui/material/Chip';
+import RemoveShoppingCartIcon from '@mui/icons-material/RemoveShoppingCart';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
+import { format, parseISO } from 'date-fns';
 
-import apiClient from '../services/api'; // Import the configured Axios instance
+import apiClient from '../services/api';
+import InventoryItemFormModal from '../components/InventoryItemFormModal';
+import ManualUsageFormModal from '../components/ManualUsageFormModal';
+import WasteFormModal from '../components/WasteFormModal';
 
 function InventoryPage() {
-  // State variables
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [apiMessage, setApiMessage] = useState(null); // For success/error feedback
+  const [apiMessage, setApiMessage] = useState(null);
 
-  // Fetch items function
+  const [isItemModalOpen, setIsItemModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+
+  const [isUsageModalOpen, setIsUsageModalOpen] = useState(false);
+  const [itemForUsage, setItemForUsage] = useState(null);
+
+  const [isWasteModalOpen, setIsWasteModalOpen] = useState(false);
+  const [itemForWaste, setItemForWaste] = useState(null);
+
+
   const fetchItems = async () => {
     setLoading(true);
     setError(null);
-    setApiMessage(null);
     try {
-      const response = await apiClient.get('/items'); // Fetch from /api/items
+      const response = await apiClient.get('/items');
       setItems(response.data);
     } catch (err) {
       console.error("Failed to fetch inventory items:", err);
@@ -44,38 +57,107 @@ function InventoryPage() {
     }
   };
 
-  // Fetch items on component mount
   useEffect(() => {
     fetchItems();
   }, []);
 
-  // Placeholder handlers
-  const handleAddItem = () => {
-    console.log("Add Item clicked");
-    setApiMessage({ type: 'info', text: 'Add functionality not yet implemented.' });
-    // TODO: Implement Add Item modal/form
+  const handleOpenAddItemModal = () => {
+    setEditingItem(null);
+    setIsItemModalOpen(true);
+    setApiMessage(null);
   };
 
-  const handleEditItem = (itemId) => {
-    console.log("Edit Item clicked for ID:", itemId);
-    setApiMessage({ type: 'info', text: `Edit functionality for ID ${itemId} not yet implemented.` });
-    // TODO: Implement Edit Item modal/form
+  const handleOpenEditItemModal = (item) => {
+    setEditingItem(item);
+    setIsItemModalOpen(true);
+    setApiMessage(null);
   };
 
-  // Delete item handler
+  const handleItemModalClose = () => {
+    setIsItemModalOpen(false);
+    setEditingItem(null);
+  };
+
+  const handleItemModalSubmit = async (itemData, itemId) => {
+    setApiMessage(null);
+    try {
+      let response;
+      if (itemId) {
+        response = await apiClient.put(`/items/${itemId}`, itemData);
+        setApiMessage({ type: 'success', text: `Item "${response.data.itemname}" updated successfully.` });
+      } else {
+        response = await apiClient.post('/items', itemData);
+        setApiMessage({ type: 'success', text: `Item "${response.data.itemname}" added successfully.` });
+      }
+      fetchItems();
+      return Promise.resolve();
+    } catch (err) {
+      const errorMsg = err.response?.data?.error || err.response?.data?.details || err.message || 'Failed to save item';
+      setApiMessage({ type: 'error', text: `Failed to save item: ${errorMsg}` });
+      throw new Error(errorMsg);
+    }
+  };
+
+  const handleOpenUsageModal = (item) => {
+    setItemForUsage(item);
+    setIsUsageModalOpen(true);
+    setApiMessage(null);
+  };
+
+  const handleUsageModalClose = () => {
+    setIsUsageModalOpen(false);
+    setItemForUsage(null);
+  };
+
+  const handleUsageModalSubmit = async (usageData) => {
+    setApiMessage(null);
+    try {
+      const response = await apiClient.post('/usage/manual', usageData);
+      setApiMessage({ type: 'success', text: `Usage for "${response.data.updatedItem.itemname}" recorded. New Qty: ${response.data.updatedItem.quantityonhand}` });
+      fetchItems();
+      return Promise.resolve();
+    } catch (err) {
+      const errorMsg = err.response?.data?.error || err.response?.data?.details || err.message || 'Failed to record usage.';
+      setApiMessage({ type: 'error', text: `Usage recording failed: ${errorMsg}` });
+      throw new Error(errorMsg);
+    }
+  };
+
+  const handleOpenWasteModal = (item) => {
+    setItemForWaste(item);
+    setIsWasteModalOpen(true);
+    setApiMessage(null);
+  };
+
+  const handleWasteModalClose = () => {
+    setIsWasteModalOpen(false);
+    setItemForWaste(null);
+  };
+
+  const handleWasteModalSubmit = async (wasteData) => {
+    setApiMessage(null);
+    try {
+      const response = await apiClient.post('/waste', wasteData);
+      setApiMessage({ type: 'success', text: `Waste for "${response.data.updatedItem.itemname}" recorded. New Qty: ${response.data.updatedItem.quantityonhand}` });
+      fetchItems();
+      return Promise.resolve();
+    } catch (err) {
+      const errorMsg = err.response?.data?.error || err.response?.data?.details || err.message || 'Failed to record waste.';
+      setApiMessage({ type: 'error', text: `Waste recording failed: ${errorMsg}` });
+      throw new Error(errorMsg);
+    }
+  };
+
+
   const handleDeleteItem = async (itemId, itemName) => {
-    console.log("Delete Item clicked for ID:", itemId);
     setApiMessage(null);
     setError(null);
-
     if (window.confirm(`Are you sure you want to delete item "${itemName}" (ID: ${itemId})? This cannot be undone.`)) {
       try {
         await apiClient.delete(`/items/${itemId}`);
-        // Refresh list by filtering state
         setItems(currentItems => currentItems.filter(item => item.itemid !== itemId));
         setApiMessage({ type: 'success', text: `Item "${itemName}" deleted successfully.` });
       } catch (err) {
-        console.error(`Failed to delete item ${itemId}:`, err);
         const errorMsg = err.response?.data?.error || err.message || 'Failed to delete item';
         setError(errorMsg);
         setApiMessage({ type: 'error', text: errorMsg });
@@ -83,7 +165,17 @@ function InventoryPage() {
     }
   };
 
-  // --- Render Logic ---
+  const formatDate = (dateString) => {
+    if (!dateString) return '-';
+    try {
+        const date = typeof dateString === 'string' && dateString.length === 10 ? parseISO(dateString + 'T00:00:00') : new Date(dateString);
+        return format(date, 'PP');
+    } catch (e) {
+        console.error("Error formatting date:", dateString, e);
+        return dateString;
+    }
+};
+
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -93,27 +185,24 @@ function InventoryPage() {
         <Button
           variant="contained"
           startIcon={<AddIcon />}
-          onClick={handleAddItem}
+          onClick={handleOpenAddItemModal}
         >
           Add Item
         </Button>
       </Box>
 
-      {/* Display API feedback message */}
       {apiMessage && (
         <Alert severity={apiMessage.type} sx={{ mb: 2 }} onClose={() => setApiMessage(null)}>
           {apiMessage.text}
         </Alert>
       )}
 
-      {/* Display loading indicator */}
       {loading && (
         <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', p: 3 }}>
           <CircularProgress />
         </Box>
       )}
 
-      {/* Display the table (only if not loading) */}
       {!loading && (
         <TableContainer component={Paper}>
           <Table sx={{ minWidth: 750 }} aria-label="inventory items table">
@@ -121,12 +210,13 @@ function InventoryPage() {
               <TableRow>
                 <TableCell>ID</TableCell>
                 <TableCell>Name</TableCell>
+                <TableCell>Item Type</TableCell>
                 <TableCell>Category</TableCell>
                 <TableCell>Unit</TableCell>
                 <TableCell align="right">Quantity</TableCell>
                 <TableCell align="right">Reorder Pt.</TableCell>
-                <TableCell>Status</TableCell> {/* For Low Stock */}
-                <TableCell>Supplier</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Details</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -137,7 +227,6 @@ function InventoryPage() {
                 </TableRow>
               ) : (
                 items.map((item) => {
-                  // Check if item quantity is at or below reorder point
                   const isLowStock = parseFloat(item.quantityonhand) <= parseFloat(item.reorderpoint) && parseFloat(item.reorderpoint) > 0;
                   return (
                     <TableRow
@@ -146,23 +235,48 @@ function InventoryPage() {
                     >
                       <TableCell component="th" scope="row">{item.itemid}</TableCell>
                       <TableCell>{item.itemname}</TableCell>
+                      <TableCell>{item.itemtype}</TableCell>
                       <TableCell>{item.categoryname || 'N/A'}</TableCell>
-                      <TableCell>{item.unitabbreviation || item.unitname || 'N/A'}</TableCell>
-                      <TableCell align="right">{parseFloat(item.quantityonhand).toFixed(2)}</TableCell> {/* Format quantity */}
-                      <TableCell align="right">{parseFloat(item.reorderpoint).toFixed(2)}</TableCell> {/* Format reorder point */}
+                      <TableCell>{item.unit_abbreviation || item.unit_name || 'N/A'}</TableCell>
+                      <TableCell align="right">{parseFloat(item.quantityonhand).toFixed(2)}</TableCell>
+                      <TableCell align="right">{parseFloat(item.reorderpoint).toFixed(2)}</TableCell>
                       <TableCell>
                         {isLowStock && (
                           <Chip label="Low Stock" color="warning" size="small" />
                         )}
                       </TableCell>
-                      <TableCell>{item.suppliername || '-'}</TableCell> {/* Display supplier or dash */}
+                      <TableCell sx={{fontSize: '0.8rem', maxWidth: '150px', whiteSpace: 'pre-wrap'}}>
+                        {item.itemtype === 'Perishable' && `Expires: ${item.perishable_expiration_date ? formatDate(item.perishable_expiration_date) : '-'}\nTemp: ${item.perishable_storage_temp || '-'}`}
+                        {item.itemtype === 'NonPerishable' && `Warranty: ${item.nonperishable_warranty || '-'}`}
+                        {item.itemtype === 'Tool' && `Maintenance: ${item.tool_maintenance_schedule || '-'}`}
+                      </TableCell>
                       <TableCell align="right">
+                         <IconButton
+                          aria-label="record usage"
+                          size="small"
+                          onClick={() => handleOpenUsageModal(item)}
+                          title="Record Manual Usage"
+                          color="info"
+                          sx={{ mr: 0.5 }}
+                        >
+                          <RemoveShoppingCartIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                          aria-label="record waste"
+                          size="small"
+                          onClick={() => handleOpenWasteModal(item)}
+                          title="Record Waste"
+                          color="default"
+                           sx={{ mr: 0.5 }}
+                        >
+                          <DeleteSweepIcon fontSize="small" />
+                        </IconButton>
                         <IconButton
                           aria-label="edit"
                           size="small"
-                          onClick={() => handleEditItem(item.itemid)}
-                          sx={{ mr: 1 }}
-                          title="Edit Item (Not Implemented)"
+                          onClick={() => handleOpenEditItemModal(item)}
+                          sx={{ mr: 0.5 }}
+                          title="Edit Item"
                         >
                           <EditIcon fontSize="small" />
                         </IconButton>
@@ -184,6 +298,27 @@ function InventoryPage() {
           </Table>
         </TableContainer>
       )}
+
+      <InventoryItemFormModal
+        open={isItemModalOpen}
+        onClose={handleItemModalClose}
+        onSubmit={handleItemModalSubmit}
+        initialData={editingItem}
+      />
+
+      <ManualUsageFormModal
+        open={isUsageModalOpen}
+        onClose={handleUsageModalClose}
+        onSubmit={handleUsageModalSubmit}
+        itemToUse={itemForUsage}
+      />
+
+      <WasteFormModal
+        open={isWasteModalOpen}
+        onClose={handleWasteModalClose}
+        onSubmit={handleWasteModalSubmit}
+        itemToWaste={itemForWaste}
+      />
     </Box>
   );
 }

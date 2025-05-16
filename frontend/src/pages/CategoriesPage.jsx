@@ -17,6 +17,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import IconButton from '@mui/material/IconButton';
 
 import apiClient from '../services/api';
+import CategoryFormModal from '../components/CategoryFormModal';
 
 function CategoriesPage() {
   const [categories, setCategories] = useState([]);
@@ -24,10 +25,12 @@ function CategoriesPage() {
   const [error, setError] = useState(null);
   const [apiMessage, setApiMessage] = useState(null);
 
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState(null);
+
   const fetchCategories = async () => {
     setLoading(true);
     setError(null);
-    setApiMessage(null);
     try {
       const response = await apiClient.get('/categories');
       setCategories(response.data);
@@ -45,16 +48,42 @@ function CategoriesPage() {
     fetchCategories();
   }, []);
 
-  const handleAddCategory = () => {
-    console.log("Add Category clicked");
-    setApiMessage({ type: 'info', text: 'Add functionality not yet implemented.' });
-    // TODO: Implement Add Category modal/form
+  const handleOpenAddModal = () => {
+    setEditingCategory(null);
+    setIsModalOpen(true);
+    setApiMessage(null);
   };
 
-  const handleEditCategory = (categoryId) => {
-    console.log("Edit Category clicked for ID:", categoryId);
-    setApiMessage({ type: 'info', text: `Edit functionality for ID ${categoryId} not yet implemented.` });
-    // TODO: Implement Edit Category modal/form
+  const handleOpenEditModal = (category) => {
+    setEditingCategory(category);
+    setIsModalOpen(true);
+    setApiMessage(null);
+  };
+
+  const handleModalClose = () => {
+    setIsModalOpen(false);
+    setEditingCategory(null);
+  };
+
+  const handleModalSubmit = async (categoryData, categoryId) => {
+    setApiMessage(null);
+    try {
+      let response;
+      if (categoryId) {
+        response = await apiClient.put(`/categories/${categoryId}`, categoryData);
+        setApiMessage({ type: 'success', text: `Category "${response.data.categoryname}" updated successfully.` });
+      } else {
+        response = await apiClient.post('/categories', categoryData);
+        setApiMessage({ type: 'success', text: `Category "${response.data.categoryname}" added successfully.` });
+      }
+      fetchCategories();
+      return Promise.resolve();
+    } catch (err) {
+      console.error("Failed to save category:", err);
+      const errorMsg = err.response?.data?.error || err.message || 'Failed to save category';
+      setApiMessage({ type: 'error', text: `Failed to save category: ${errorMsg}` });
+      throw new Error(errorMsg);
+    }
   };
 
   const handleDeleteCategory = async (categoryId, categoryName) => {
@@ -85,7 +114,7 @@ function CategoriesPage() {
         <Button
           variant="contained"
           startIcon={<AddIcon />}
-          onClick={handleAddCategory}
+          onClick={handleOpenAddModal}
         >
           Add Category
         </Button>
@@ -127,14 +156,14 @@ function CategoriesPage() {
                   >
                     <TableCell component="th" scope="row">{category.categoryid}</TableCell>
                     <TableCell>{category.categoryname}</TableCell>
-                    <TableCell>{category.description || '-'}</TableCell> {/* Show dash if no description */}
+                    <TableCell>{category.description || '-'}</TableCell>
                     <TableCell align="right">
                       <IconButton
                         aria-label="edit"
                         size="small"
-                        onClick={() => handleEditCategory(category.categoryid)}
+                        onClick={() => handleOpenEditModal(category)}
                         sx={{ mr: 1 }}
-                        title="Edit Category (Not Implemented)"
+                        title="Edit Category"
                       >
                         <EditIcon fontSize="small" />
                       </IconButton>
@@ -155,6 +184,13 @@ function CategoriesPage() {
           </Table>
         </TableContainer>
       )}
+
+      <CategoryFormModal
+        open={isModalOpen}
+        onClose={handleModalClose}
+        onSubmit={handleModalSubmit}
+        initialData={editingCategory}
+      />
     </Box>
   );
 }

@@ -11,76 +11,104 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import CircularProgress from '@mui/material/CircularProgress';
 import Alert from '@mui/material/Alert';
-import AddIcon from '@mui/icons-material/Add'; // Example Icon
+import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import IconButton from '@mui/material/IconButton';
 
-import apiClient from '../services/api'; // Import the configured Axios instance
+import apiClient from '../services/api';
+import UnitFormModal from '../components/UnitFormModal';
 
 function UnitsPage() {
-  // State variables
-  const [units, setUnits] = useState([]); // Stores the list of units
-  const [loading, setLoading] = useState(true); // Indicates if data is being loaded
-  const [error, setError] = useState(null); // Stores any error during fetch
+  const [units, setUnits] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [apiMessage, setApiMessage] = useState(null);
 
-  // Fetch units from the API when the component mounts
-  useEffect(() => {
-    const fetchUnits = async () => {
-      setLoading(true); // Start loading
-      setError(null); // Reset error state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingUnit, setEditingUnit] = useState(null);
+
+  const fetchUnits = async () => {
+      setLoading(true);
+      setError(null);
       try {
         const response = await apiClient.get('/units');
-        setUnits(response.data); // Update state with fetched units
+        setUnits(response.data);
       } catch (err) {
         console.error("Failed to fetch units:", err);
-        setError(err.response?.data?.error || err.message || 'Failed to fetch units'); // Set error message
+        const errorMsg = err.response?.data?.error || err.message || 'Failed to fetch units';
+        setError(errorMsg);
+        setApiMessage({ type: 'error', text: errorMsg });
       } finally {
-        setLoading(false); // Stop loading regardless of success or failure
+        setLoading(false);
       }
     };
 
+  useEffect(() => {
     fetchUnits();
-  }, []); // Empty dependency array means this effect runs only once on mount
+  }, []);
 
-  // Handler functions for future actions (Add, Edit, Delete)
-  const handleAddUnit = () => {
-    console.log("Add Unit clicked");
-    // TODO: Implement logic to open a modal or navigate to an add form
+  const handleOpenAddModal = () => {
+    setEditingUnit(null);
+    setIsModalOpen(true);
+    setApiMessage(null);
   };
 
-  const handleEditUnit = (unitId) => {
-    console.log("Edit Unit clicked for ID:", unitId);
-     // TODO: Implement logic to open a modal or navigate to an edit form
+  const handleOpenEditModal = (unit) => {
+    setEditingUnit(unit);
+    setIsModalOpen(true);
+    setApiMessage(null);
   };
 
-    const handleDeleteUnit = async (unitId) => {
+  const handleModalClose = () => {
+    setIsModalOpen(false);
+    setEditingUnit(null);
+  };
+
+  const handleModalSubmit = async (unitData, unitId) => {
+    setApiMessage(null);
+    try {
+      let response;
+      if (unitId) {
+        console.log(`Updating unit ${unitId} with data:`, unitData);
+        response = await apiClient.put(`/units/${unitId}`, unitData);
+        setApiMessage({ type: 'success', text: `Unit "${response.data.unit}" updated successfully.` });
+      } else {
+        console.log("Adding new unit with data:", unitData);
+        response = await apiClient.post('/units', unitData);
+        setApiMessage({ type: 'success', text: `Unit "${response.data.unit}" added successfully.` });
+      }
+      fetchUnits();
+      return Promise.resolve();
+    } catch (err) {
+      console.error("Failed to save unit:", err);
+      const errorMsg = err.response?.data?.error || err.message || 'Failed to save unit';
+      setApiMessage({ type: 'error', text: `Failed to save unit: ${errorMsg}` });
+      throw new Error(errorMsg);
+    }
+  };
+
+  const handleDeleteUnit = async (unitId) => {
     console.log("Delete Unit clicked for ID:", unitId);
-    if (window.confirm(`Are you sure you want to delete unit ID ${unitId}? This cannot be undone.`)) {
+    setApiMessage(null);
+    setError(null);
+    const unitToDelete = units.find(u => u.unitid === unitId);
+    const unitName = unitToDelete ? `${unitToDelete.unit} (${unitToDelete.abbreviation})` : `ID ${unitId}`;
+
+    if (window.confirm(`Are you sure you want to delete unit "${unitName}"? This cannot be undone.`)) {
         try {
             await apiClient.delete(`/units/${unitId}`);
-            // Refresh the list after successful deletion
-            setUnits(units.filter(unit => unit.unitid !== unitId));
-             // TODO: Add success notification (e.g., using a Snackbar)
+            setUnits(currentUnits => currentUnits.filter(unit => unit.unitid !== unitId));
+            setApiMessage({ type: 'success', text: `Unit "${unitName}" deleted successfully.` });
         } catch (err) {
             console.error(`Failed to delete unit ${unitId}:`, err);
-            setError(err.response?.data?.error || err.message || 'Failed to delete unit');
-             // TODO: Add error notification
+            const errorMsg = err.response?.data?.error || err.message || 'Failed to delete unit';
+            setError(errorMsg);
+            setApiMessage({ type: 'error', text: errorMsg });
         }
     }
   };
 
-
-  // --- Render Logic ---
-
-  // Display loading indicator
-  if (loading) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
-        <CircularProgress />
-      </Box>
-    );
-  }
 
   return (
     <Box>
@@ -91,70 +119,85 @@ function UnitsPage() {
         <Button
           variant="contained"
           startIcon={<AddIcon />}
-          onClick={handleAddUnit}
+          onClick={handleOpenAddModal}
         >
           Add Unit
         </Button>
       </Box>
 
-      {/* Display error message if fetch failed */}
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
+      {apiMessage && (
+        <Alert severity={apiMessage.type} sx={{ mb: 2 }} onClose={() => setApiMessage(null)}>
+          {apiMessage.text}
         </Alert>
       )}
 
-      {/* Display the table with units */}
-      <TableContainer component={Paper}>
-        <Table sx={{ minWidth: 650 }} aria-label="units of measure table">
-          <TableHead sx={{ backgroundColor: 'grey.200' /* Lighter header */ }}>
-            <TableRow>
-              <TableCell>ID</TableCell>
-              <TableCell>Unit Name</TableCell>
-              <TableCell>Abbreviation</TableCell>
-              <TableCell align="right">Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {units.length === 0 && !error ? (
-                 <TableRow>
-                    <TableCell colSpan={4} align="center">No units found.</TableCell>
-                 </TableRow>
-            ) : (
-                units.map((unit) => (
-                <TableRow
-                    key={unit.unitid} // Use lowercase from backend response
-                    sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
-                >
-                    <TableCell component="th" scope="row">
-                    {unit.unitid}
-                    </TableCell>
-                    <TableCell>{unit.unit}</TableCell> {/* Use lowercase 'unit' */}
-                    <TableCell>{unit.abbreviation}</TableCell> {/* Use lowercase 'abbreviation' */}
-                    <TableCell align="right">
-                    <IconButton
-                        aria-label="edit"
-                        size="small"
-                        onClick={() => handleEditUnit(unit.unitid)}
-                        sx={{ mr: 1 }}
-                    >
-                        <EditIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton
-                        aria-label="delete"
-                        size="small"
-                        onClick={() => handleDeleteUnit(unit.unitid)}
-                        color="error"
-                    >
-                        <DeleteIcon fontSize="small" />
-                    </IconButton>
-                    </TableCell>
+        {loading && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', p: 3 }}>
+                <CircularProgress />
+            </Box>
+        )}
+
+      {!loading && (
+          <TableContainer component={Paper}>
+            <Table sx={{ minWidth: 650 }} aria-label="units of measure table">
+              <TableHead sx={{ backgroundColor: 'grey.200' }}>
+                <TableRow>
+                  <TableCell>ID</TableCell>
+                  <TableCell>Unit Name</TableCell>
+                  <TableCell>Abbreviation</TableCell>
+                  <TableCell align="right">Actions</TableCell>
                 </TableRow>
-                ))
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+              </TableHead>
+              <TableBody>
+                {units.length === 0 && !error ? (
+                     <TableRow>
+                        <TableCell colSpan={4} align="center">No units found. Create one!</TableCell>
+                     </TableRow>
+                ) : (
+                    units.map((unit) => (
+                    <TableRow
+                        key={unit.unitid}
+                        sx={{ '&:last-child td, &:last-child th': { border: 0 }, '&:hover': { backgroundColor: 'action.hover'} }}
+                    >
+                        <TableCell component="th" scope="row">
+                        {unit.unitid}
+                        </TableCell>
+                        <TableCell>{unit.unit}</TableCell>
+                        <TableCell>{unit.abbreviation}</TableCell>
+                        <TableCell align="right">
+                        <IconButton
+                            aria-label="edit"
+                            size="small"
+                            onClick={() => handleOpenEditModal(unit)}
+                            sx={{ mr: 1 }}
+                            title="Edit Unit"
+                        >
+                            <EditIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                            aria-label="delete"
+                            size="small"
+                            onClick={() => handleDeleteUnit(unit.unitid)}
+                            color="error"
+                            title="Delete Unit"
+                        >
+                            <DeleteIcon fontSize="small" />
+                        </IconButton>
+                        </TableCell>
+                    </TableRow>
+                    ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+      )}
+
+       <UnitFormModal
+            open={isModalOpen}
+            onClose={handleModalClose}
+            onSubmit={handleModalSubmit}
+            initialData={editingUnit}
+       />
     </Box>
   );
 }

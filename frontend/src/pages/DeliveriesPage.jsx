@@ -16,15 +16,16 @@ import Accordion from '@mui/material/Accordion';
 import AccordionSummary from '@mui/material/AccordionSummary';
 import AccordionDetails from '@mui/material/AccordionDetails';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 
 import apiClient from '../services/api';
+import DeliveryFormModal from '../components/DeliveryFormModal';
 
-// Helper function to format date strings (or return empty string)
 const formatDate = (dateString) => {
-    if (!dateString) return '';
+    if (!dateString) return '-';
     try {
-        return format(new Date(dateString), 'PP'); // e.g., Apr 30, 2025
+        const date = typeof dateString === 'string' && dateString.length === 10 ? parseISO(dateString + 'T00:00:00') : new Date(dateString);
+        return format(date, 'PP');
     } catch (e) {
         console.error("Error formatting date:", dateString, e);
         return dateString;
@@ -37,10 +38,11 @@ function DeliveriesPage() {
   const [error, setError] = useState(null);
   const [apiMessage, setApiMessage] = useState(null);
 
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
   const fetchDeliveries = async () => {
     setLoading(true);
     setError(null);
-    setApiMessage(null);
     try {
       const response = await apiClient.get('/deliveries');
       setDeliveries(response.data);
@@ -58,10 +60,27 @@ function DeliveriesPage() {
     fetchDeliveries();
   }, []);
 
-  const handleAddDelivery = () => {
-    console.log("Add Delivery clicked");
-    setApiMessage({ type: 'info', text: 'Add functionality not yet implemented.' });
-    // TODO: Implement Add Delivery modal/form
+  const handleOpenAddDeliveryModal = () => {
+    setIsModalOpen(true);
+    setApiMessage(null);
+  };
+
+  const handleModalClose = () => {
+    setIsModalOpen(false);
+  };
+
+  const handleModalSubmit = async (deliveryData) => {
+    setApiMessage(null);
+    try {
+      const response = await apiClient.post('/deliveries', deliveryData);
+      setApiMessage({ type: 'success', text: `Delivery (ID: ${response.data.deliveryid}) recorded successfully.` });
+      fetchDeliveries();
+      return Promise.resolve();
+    } catch (err) {
+      const errorMsg = err.response?.data?.error || err.response?.data?.details || err.message || 'Failed to record delivery.';
+      setApiMessage({ type: 'error', text: `Failed to record delivery: ${errorMsg}` });
+      throw new Error(errorMsg);
+    }
   };
 
   return (
@@ -73,7 +92,7 @@ function DeliveriesPage() {
         <Button
           variant="contained"
           startIcon={<AddIcon />}
-          onClick={handleAddDelivery}
+          onClick={handleOpenAddDeliveryModal}
         >
           Record Delivery
         </Button>
@@ -91,17 +110,16 @@ function DeliveriesPage() {
         </Box>
       )}
 
-      {!loading && error && (
+      {!loading && error && !apiMessage && (
            <Alert severity="error" sx={{ mb: 2 }}>
              {error}
            </Alert>
       )}
 
       {!loading && !error && deliveries.length === 0 && (
-         <Typography sx={{ textAlign: 'center', mt: 3 }}>No deliveries recorded yet.</Typography>
+         <Typography sx={{ textAlign: 'center', mt: 3 }}>No deliveries recorded yet. Click "Record Delivery" to add one.</Typography>
       )}
 
-      {/* Display Deliveries using Accordions */}
       {!loading && !error && deliveries.length > 0 && (
         <Box>
           {deliveries.map((delivery) => (
@@ -114,49 +132,60 @@ function DeliveriesPage() {
                 <Typography sx={{ width: '33%', flexShrink: 0 }}>
                   ID: {delivery.deliveryid} - {formatDate(delivery.deliverydate)}
                 </Typography>
-                <Typography sx={{ color: 'text.secondary' }}>
-                  Supplier: {delivery.suppliername || 'N/A'} {delivery.invoicenumber ? `(Inv: ${delivery.invoicenumber})` : ''}
+                <Typography sx={{ color: 'text.secondary', flexGrow: 1 }}>
+                  Supplier: {delivery.suppliername || 'N/A'}
                 </Typography>
+                {delivery.invoicenumber && (
+                    <Typography sx={{ color: 'text.secondary', ml: 2 }}>
+                        Inv: {delivery.invoicenumber}
+                    </Typography>
+                )}
               </AccordionSummary>
               <AccordionDetails>
                 <Typography variant="subtitle2" gutterBottom>Items Received:</Typography>
-                <TableContainer component={Paper} variant="outlined">
-                  <Table size="small" aria-label="delivery items">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Item ID</TableCell>
-                        <TableCell>Item Name</TableCell>
-                        <TableCell align="right">Qty Recvd</TableCell>
-                        <TableCell>Unit</TableCell>
-                        <TableCell>Expires</TableCell>
-                        <TableCell align="right">Cost/Unit</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {delivery.items && delivery.items.length > 0 ? (
-                        delivery.items.map((item, index) => (
-                          <TableRow key={`${item.itemid}-${index}`}>
+                {delivery.items && delivery.items.length > 0 ? (
+                    <TableContainer component={Paper} variant="outlined">
+                    <Table size="small" aria-label="delivery items">
+                        <TableHead>
+                        <TableRow>
+                            <TableCell>Item ID</TableCell>
+                            <TableCell>Item Name</TableCell>
+                            <TableCell>Type</TableCell>
+                            <TableCell align="right">Qty Recvd</TableCell>
+                            <TableCell>Unit</TableCell>
+                            <TableCell>Expires</TableCell>
+                            <TableCell align="right">Cost/Unit</TableCell>
+                        </TableRow>
+                        </TableHead>
+                        <TableBody>
+                        {delivery.items.map((item, index) => (
+                            <TableRow key={`${item.itemid}-${index}`}>
                             <TableCell>{item.itemid}</TableCell>
                             <TableCell>{item.itemname}</TableCell>
+                            <TableCell>{item.itemtype || 'N/A'}</TableCell>
                             <TableCell align="right">{parseFloat(item.quantityreceived).toFixed(2)}</TableCell>
-                            <TableCell>{item.unitabbreviation}</TableCell>
-                            <TableCell>{formatDate(item.expirationdate) || '-'}</TableCell>
+                            <TableCell>{item.unitabbreviation || item.unitname}</TableCell>
+                            <TableCell>{formatDate(item.expirationdate)}</TableCell>
                             <TableCell align="right">{item.costperunit ? `$${parseFloat(item.costperunit).toFixed(2)}` : '-'}</TableCell>
-                          </TableRow>
-                        ))
-                      ) : (
-                        <TableRow>
-                          <TableCell colSpan={6} align="center">No items listed for this delivery.</TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
+                            </TableRow>
+                        ))}
+                        </TableBody>
+                    </Table>
+                    </TableContainer>
+                ) : (
+                    <Typography variant="body2" sx={{ fontStyle: 'italic' }}>No items listed for this delivery.</Typography>
+                )}
               </AccordionDetails>
             </Accordion>
           ))}
         </Box>
       )}
+
+      <DeliveryFormModal
+        open={isModalOpen}
+        onClose={handleModalClose}
+        onSubmit={handleModalSubmit}
+      />
     </Box>
   );
 }
